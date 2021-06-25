@@ -74,8 +74,8 @@ func main() {
 
 	done := makePool(charChecks, func(c paramCheck, output chan paramCheck) {
 		output_of_url := []string{c.url, c.param}
-		for _, char := range []string{"\"", "'", "<", ">", "$", "|", "(", ")", "`", ":", ";", "{", "}"} {
-			wasReflected, err := checkAppend(c.url, c.param, "aprefix"+char+"asuffix")
+		for _, char := range []string{"{{7*7}}", "${7*7}", "<%= 7*7 %>", "#{ 7 * 7 }", "${7*7}", "${{7*7}}", "{{7*'7'}}"} {
+			wasReflected, err := checkAppendSSTI(c.url, c.param, "aprefix"+char+"asuffix")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error from checkAppend for url %s with param %s with %s: %s", c.url, c.param, char, err)
 				continue
@@ -131,10 +131,10 @@ func checkReflected(targetURL string) ([]string, error) {
 	}
 
 	// also nope
-	ct := resp.Header.Get("Content-Type")
-	if ct != "" && !strings.Contains(ct, "html") {
-		return out, nil
-	}
+	// ct := resp.Header.Get("Content-Type")
+	// if ct != "" && !strings.Contains(ct, "html") {
+	// 	return out, nil
+	// }
 
 	body := string(b)
 
@@ -154,6 +154,64 @@ func checkReflected(targetURL string) ([]string, error) {
 	}
 
 	return out, nil
+}
+
+func checkReflectedSSTI(targetURL string) ([]string, error) {
+
+        out := make([]string, 0)
+
+        req, err := http.NewRequest("GET", targetURL, nil)
+        if err != nil {
+                return out, err
+        }
+
+        // temporary. Needs to be an option
+        req.Header.Add("User-Agent", "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.100 Safari/53")
+
+        resp, err := httpClient.Do(req)
+        if err != nil {
+                return out, err
+        }
+        if resp.Body == nil {
+                return out, err
+        }
+        defer resp.Body.Close()
+
+        // always read the full body so we can re-use the tcp connection
+        b, err := ioutil.ReadAll(resp.Body)
+        if err != nil {
+                return out, err
+        }
+
+        // nope (:
+        if strings.HasPrefix(resp.Status, "3") {
+                return out, nil
+        }
+
+        // also nope
+        // ct := resp.Header.Get("Content-Type")
+        // if ct != "" && !strings.Contains(ct, "html") {
+        //      return out, nil
+        // }
+
+        body := string(b)
+
+        u, err := url.Parse(targetURL)
+        if err != nil {
+                return out, err
+        }
+
+        for key, vv := range u.Query() {
+                for _, v := range vv {
+                        if (!strings.Contains(body, "aprefix49asuffix") && v == v) {
+                                continue
+                        }
+
+                        out = append(out, key)
+                }
+        }
+
+        return out, nil
 }
 
 func checkAppend(targetURL, param, suffix string) (bool, error) {
@@ -184,6 +242,36 @@ func checkAppend(targetURL, param, suffix string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func checkAppendSSTI(targetURL, param, suffix string) (bool, error) {
+        u, err := url.Parse(targetURL)
+        if err != nil {
+                return false, err
+        }
+
+        qs := u.Query()
+        val := qs.Get(param)
+        //if val == "" {
+        //return false, nil
+        //return false, fmt.Errorf("can't append to non-existant param %s", param)
+        //}
+
+        qs.Set(param, val+suffix)
+        u.RawQuery = qs.Encode()
+
+        reflected, err := checkReflectedSSTI(u.String())
+        if err != nil {
+                return false, err
+        }
+
+        for _, r := range reflected {
+                if r == param {
+                        return true, nil
+                }
+        }
+
+        return false, nil
 }
 
 type workerFunc func(paramCheck, chan paramCheck)
